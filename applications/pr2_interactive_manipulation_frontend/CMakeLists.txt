@@ -47,6 +47,7 @@ qt4_wrap_cpp(MOC_FILES
   include/pr2_interactive_manipulation/point_head_camera_display.h
   include/pr2_interactive_manipulation/publish_click_camera_display.h
   include/pr2_interactive_manipulation/awesome_camera_display.h
+  include/pr2_interactive_manipulation/topic_throttle_control_display.h
 )
 
 # rviz plugin
@@ -61,6 +62,7 @@ rosbuild_add_library(interactive_manipulation_plugin
   src/interactive_manipulation_frontend_display.cpp
   src/interactive_manipulation_frontend.cpp
   src/advanced_options_dialog.cpp
+  src/topic_throttle_control_display.cpp
   src/init.cpp
   ${UIC_FILES}
   ${MOC_FILES}
