@@ -41,6 +41,8 @@
 
 namespace pr2_interactive_manipulation {
 
+/* Just initilialize everything and connect the buttons for the display to their callbacks.
+ */
 TopicThrottleControlDisplay::TopicThrottleControlDisplay(): 
   Display(),
   frame_(0),
@@ -63,19 +65,29 @@ TopicThrottleControlDisplay::TopicThrottleControlDisplay():
   
 
 
+
 TopicThrottleControlDisplay::~TopicThrottleControlDisplay()
 {
+  // Delete the UI element if it exists
+  // Any existing frame dock will delete frames that it holds, so don't delete them explicitly
   if(frame_dock_)
     delete frame_dock_;    
+  
+  // If a thread has to call dynamic_reconfigure asynchronously has been allocated, 
+  // wait for it to finish, and then delete it so that we don't end up leaking it
+  // or segfaulting when it reaches its exit function
   if(set_rate_thread_)
+  {
+    set_rate_thread_->wait();
     delete set_rate_thread_;
+  }
 }
 
 void TopicThrottleControlDisplay::onInitialize()
 {
   rviz::WindowManagerInterface* window_context = context_->getWindowManager();
   ROS_ASSERT(window_context);
-  //FIXME add GUI
+  // FIXME add GUI
   frame_ = new QFrame();//TopicThrottleControl(context_, window_context->getParentWindow());
   frame_dock_ = window_context->addPane( "TopicThrottle", frame_ );
 
@@ -96,7 +108,8 @@ void TopicThrottleControlDisplay::update(float, float)
   if ( frame_ ) frame_->update();
 }
 
-
+// Helper function to determine if a topic is dynamically reconfigurable by testing whether or not it 
+// has topics associated with the dynamic_reconfigure system associated with it.
 bool isParentReconfigurable(const ros::master::TopicInfo & topic)
 {
   static const std::string topic_config_type(QString::fromStdString(
@@ -105,28 +118,30 @@ bool isParentReconfigurable(const ros::master::TopicInfo & topic)
   return topic.datatype==topic_config_type;
 }
 
-
+// Helper function to get name of the node that is dynamically reconfigurable
 std::string getParentName(std::string topic_name)
 {
-  QString qtn(topic_name.c_str());
-  qtn.truncate(qtn.lastIndexOf('/'));
-  return qtn.toStdString();
+  QString name(topic_name.c_str());
+  name.truncate(name.lastIndexOf('/'));
+  return name.toStdString();
 }
 
 void TopicThrottleControlDisplay::setTopicRate(std::string topic_name, float rate)
 {
+  // If a thread already exists, wait for it to finish and get rid of it
   if(set_rate_thread_)
   {
     set_rate_thread_->wait();
     delete set_rate_thread_;    
   }
-  
+  // Create and dispatch the thread
   set_rate_thread_ = new DynRecThread(topic_name, rate);
+  // Connect the signal to collect the thread when it has finished
   connect(set_rate_thread_, SIGNAL(finishedRunning(int)) , this, SLOT(finishedSetting(int)));
-  set_rate_thread_->start();
-  
-  
+  // Dispatch the thread
+  set_rate_thread_->start();  
 }
+
 
 void TopicThrottleControlDisplay::finishedSetting(int succeeded)
 {
@@ -135,7 +150,10 @@ void TopicThrottleControlDisplay::finishedSetting(int succeeded)
     
 }
 
-
+// Helper function to test whether the parent has an update rate parameter
+// FIXME: Ideally this would test if the update_rate parameter is actually
+// dynamically reconfigurable, but doing so is extremely slow and hackish
+// with the current (nonexistent) c++ dynamic_reconfigure interface.
 bool isRateReconfigurable(std::string topic_name)
 {
   if (ros::param::has(topic_name + "/update_rate"))
@@ -170,6 +188,8 @@ void TopicThrottleControlDisplay::fillTopicList()
  QApplication::restoreOverrideCursor();
 }
 
+
+
 bool TopicThrottleControlDisplay::getRate()
 {
   double rate;
@@ -183,15 +203,13 @@ bool TopicThrottleControlDisplay::getRate()
 void TopicThrottleControlDisplay::updateTopicFrequency()
 {
   setTopicRate(topic_name_->getStdString(), topic_rate_->getFloat());           
-
 }
 
-
+// When the topic name is updated, go ahead and find out the current publication rate
 void TopicThrottleControlDisplay::updateTopicName()
 {
   if (!getRate())
     setStatus(rviz::StatusProperty::Error, "Topic does not have reconfigurable parameter required", "Error");
-
 }
 
 
