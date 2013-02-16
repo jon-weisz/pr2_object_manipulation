@@ -36,7 +36,9 @@
 #include "rviz/properties/float_property.h"
 #include <QFrame>
 #include <QThread>
-
+#include <advanced_nodelet_throttle/SetRateAction.h>
+#include <advanced_nodelet_throttle/SendOneMsgAction.h>
+#include <actionlib/client/simple_action_client.h>
 
 
 class QDockWidget;
@@ -52,41 +54,9 @@ class PanelDockWidget;
 namespace pr2_interactive_manipulation
 {
 
-/* @brief - Thread to dispatch calls to the command line dynamic_reconfigure interface asynchronously
- * because they are so very slow.
- */
-class DynRecThread : public QThread
-{
-  Q_OBJECT
-public:
-  /* @brief - Creates a thread that runs the dynamic_reconfigure command to set the 
-   *  rate of this topic.
-   * 
-   * @param topic_name - The name of the topic being reconfigured
-   * @param rate - The new frequency to publish at. Any rate <=0.0 means don't publish.
-   */  
-  DynRecThread(std::string topic_name, float rate): topic_name_(topic_name), rate_(rate){}
 
-
-  /* @brief - Does the actual work of dispatching the call to dynamic_reconfigure
-   */
-  virtual void run();
-
-
-Q_SIGNALS:
-  /* @brief - signal emitted to let the thread that originally dispatched this one
-   *  know that we have finished.
-   */
-  void finishedRunning(int i);
-
-
-private:
-  std::string topic_name_;
-  float rate_;
-};
-
-
-/* @brief - Display to allow the user to reset the rate at which throttled nodes are published
+/* @brief Display to allow the user to reset the rate at which throttled 
+ * nodes are published 
  */
 class TopicThrottleControlDisplay : public rviz::Display
 {
@@ -117,21 +87,18 @@ protected Q_SLOTS:
    */
   void fillTopicList();
 
-  /* @brief Callback function for when the asynchronous thread that actually
-   * calls the dynamic reconfigure code has finished.
-   *
-   * @param succeeded - Whether the dispatched thread exited without error 
-   * after setting the requested parameter
-   */
-  void finishedSetting(int succeeded);
+  /// @brief Request most recent message recieved by topic   
   void getOneMessage();
 
 protected:
-  // @brief Callback to enable any rendered UI to the user when this display is enabled. 
-   
+  /* @brief Callback to enable any rendered UI to the user 
+   * when this display is enabled.    
+   */
   virtual void onEnable();
 
-  // @brief Callback to remove any rendered UI to the user when this display is enabled. 
+  /* @brief Callback to remove any rendered UI to the user 
+   * when this display is enabled. 
+   */
   virtual void onDisable();
 
   /* @brief Queries the parameter server for the current rate of the throttled topic
@@ -140,25 +107,43 @@ protected:
    * Returns true iff the throttled topic has an update_rate parameter.
    */
   bool getRate();
-  // The rate at which the throttled topic is published. 
+
+  /// The rate at which the throttled topic is published. 
   rviz::FloatProperty *topic_rate_;
-  // The name of the topic being throttled
+  /// The name of the topic being throttled
   rviz::EditableEnumProperty *topic_name_;
+  /// Button to take a snapshot
+  rviz::BoolProperty * snapshot_;
+  
 
-  //FIXME design buttons for this sucker
-  //TopicThrottleControl* frame_;
-  QFrame * frame_;
-  QDockWidget* frame_dock_;
+  //TODO Add some kind of GUI
+  //TopicThrottleControl* frame_;  
+  //QDockWidget* frame_dock_;
 
-  /* @brief Set the publication frequency of the throttled topic
-   *
-   * This function allocates and dispatches a thread to call the dynamic_reconfigure script
-   * from the command line.
-   */
+  /// @brief Set the publication frequency of the throttled topic
   void setTopicRate(std::string topic_name, float rate);
+  /* @brief Callback to set status of display according to the status 
+   * of the set topic rate action.
+   */
+  void setTopicRateDoneCallback(const actionlib::SimpleClientGoalState &state,
+                                const advanced_nodelet_throttle::
+                                SetRateResultConstPtr &result);
 
-  // Any currently existing thread for calling the dynamic_reconfigure script.
-  DynRecThread * set_rate_thread_;
+  /* @brief Callback to set status of display according to the status 
+   * of the request message action.
+   */
+  void sendMsgDoneCallback(const actionlib::SimpleClientGoalState &state, 
+                           const advanced_nodelet_throttle::
+                           SendOneMsgResultConstPtr &result);
+  
+  
+  typedef actionlib::SimpleActionClient<advanced_nodelet_throttle::
+                                        SetRateAction> SetRateActionClient;
+  typedef actionlib::SimpleActionClient<advanced_nodelet_throttle::
+                                        SendOneMsgAction> SendMsgActionClient;
+
+  SetRateActionClient *set_rate_ac_;
+  SendMsgActionClient *send_msg_ac_;
 };
 
 }

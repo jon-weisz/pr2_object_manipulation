@@ -41,26 +41,38 @@
 
 namespace pr2_interactive_manipulation {
 
-/* Just initilialize everything and connect the buttons for the display to their callbacks.
+/* Just initilialize everything and connect the buttons for the display 
+ * to their callbacks.
  */
 TopicThrottleControlDisplay::TopicThrottleControlDisplay(): 
   Display(),
-  frame_(0),
-  frame_dock_(0),
-  set_rate_thread_(NULL)
+  //frame_(NULL),
+  //frame_dock_(NULL),  
+  set_rate_ac_(NULL),
+  send_msg_ac_(NULL)
+
 {
   topic_rate_ = new rviz::FloatProperty("Max Frequency",0.0,
-                      "Maximum number of messages/second. 0.0 stops messages",
-                      this,
-                      SLOT(updateTopicFrequency() ));
+                                        "Maximum number of messages/second."
+                                        "0.0 stops messages",
+                                        this,
+                                        SLOT(updateTopicFrequency() ));
 
 
  topic_name_ = new rviz::EditableEnumProperty("Throttled Topic","",
-                      "Throttled Topic to control",
-                      this,
-                      SLOT(updateTopicName() ));
+                                              "Throttled Topic to control",
+                                              this,
+                                              SLOT(updateTopicName() ));
 
- connect(topic_name_,SIGNAL(requestOptions(EditableEnumProperty*)),this, SLOT(fillTopicList()));
+ snapshot_ = new rviz::BoolProperty("Snapshot","",
+                                    "Request a single message from this topic,"
+                                    "even if it is currently paused",
+                                    this,
+                                    SLOT(getOneMessage()));
+ 
+
+ connect(topic_name_,SIGNAL(requestOptions(EditableEnumProperty*)),
+         this, SLOT(fillTopicList()));
 }
   
 
@@ -68,87 +80,104 @@ TopicThrottleControlDisplay::TopicThrottleControlDisplay():
 
 TopicThrottleControlDisplay::~TopicThrottleControlDisplay()
 {
-  // Delete the UI element if it exists
-  // Any existing frame dock will delete frames that it holds, so don't delete them explicitly
-  if(frame_dock_)
-    delete frame_dock_;    
+  // Delete the UI element if it exists   
+  // delete frame_dock_;    
   
-  // If a thread has to call dynamic_reconfigure asynchronously has been allocated, 
-  // wait for it to finish, and then delete it so that we don't end up leaking it
-  // or segfaulting when it reaches its exit function
-  if(set_rate_thread_)
-  {
-    set_rate_thread_->wait();
-    delete set_rate_thread_;
-  }
+  // Delete action clients
+  delete set_rate_ac_;
+  delete send_msg_ac_;
 }
+
+
 
 void TopicThrottleControlDisplay::onInitialize()
 {
   rviz::WindowManagerInterface* window_context = context_->getWindowManager();
   ROS_ASSERT(window_context);
   // FIXME add GUI
-  frame_ = new QFrame();//TopicThrottleControl(context_, window_context->getParentWindow());
-  frame_dock_ = window_context->addPane( "TopicThrottle", frame_ );
+  //frame_ = new TopicThrottleControl(context_, 
+  //                                  window_context->getParentWindow());
+  //frame_dock_ = window_context->addPane( "TopicThrottle", frame_ );
 
 }
+
+
 
 void TopicThrottleControlDisplay::onEnable()
 {
-  frame_dock_->show();
+  // Do GUI stuff
+  //frame_dock_->show();
 }
+
+
 
 void TopicThrottleControlDisplay::onDisable()
 {
-  if ( frame_dock_ ) frame_dock_->hide();
+  // Do GUI stuff
+  //if ( frame_dock_ ) frame_dock_->hide();
 }
+
+
 
 void TopicThrottleControlDisplay::update(float, float)
 {
-  if ( frame_ ) frame_->update();
+  // DO gui stuff
+  // if ( frame_ ) frame_->update();
 }
 
-// Helper function to determine if a topic is dynamically reconfigurable by testing whether or not it 
-// has topics associated with the dynamic_reconfigure system associated with it.
-bool isParentReconfigurable(const ros::master::TopicInfo & topic)
+
+
+/* Helper function to determine if a topic is dynamically reconfigurable 
+ * by testing whether or not it has topics associated with the rate 
+ * throttling action.
+ */
+bool isGrandparentThrottleable(const ros::master::TopicInfo & topic)
 {
-  static const std::string topic_config_type(QString::fromStdString(
-                                             ros::message_traits::datatype<dynamic_reconfigure::ConfigDescription>()).toStdString());
+  //Define the correct message type as the message type of interest
+  typedef ros::message_traits::
+    DataType<advanced_nodelet_throttle::SetRateActionFeedback> MsgTypeStr;
+    
+  //Store the string that names the message type
+  static const std::string topic_type = std::string(MsgTypeStr().value());
   
-  return topic.datatype==topic_config_type;
+  return topic.datatype==topic_type;
 }
+
+
 
 // Helper function to get name of the node that is dynamically reconfigurable
-std::string getParentName(std::string topic_name)
+std::string getGrandparentName(std::string topic_name)
 {
   QString name(topic_name.c_str());
+  name.truncate(name.lastIndexOf('/'));
   name.truncate(name.lastIndexOf('/'));
   return name.toStdString();
 }
 
+
+
+
 void TopicThrottleControlDisplay::setTopicRate(std::string topic_name, float rate)
 {
-  // If a thread already exists, wait for it to finish and get rid of it
-  if(set_rate_thread_)
+  // Wait for valid action server
+  if(!set_rate_ac_->waitForServer(ros::Duration(5.0)))
   {
-    set_rate_thread_->wait();
-    delete set_rate_thread_;    
+    setStatus(rviz::StatusProperty::Error, 
+              "Couldn't reach action server", "Error");
   }
-  // Create and dispatch the thread
-  set_rate_thread_ = new DynRecThread(topic_name, rate);
-  // Connect the signal to collect the thread when it has finished
-  connect(set_rate_thread_, SIGNAL(finishedRunning(int)) , this, SLOT(finishedSetting(int)));
-  // Dispatch the thread
-  set_rate_thread_->start();  
+  else
+  {
+    advanced_nodelet_throttle::SetRateGoal g;
+    g.rate = rate;
+    set_rate_ac_->sendGoal(g, 
+                           boost::bind(&TopicThrottleControlDisplay::
+                                       setTopicRateDoneCallback, this, _1, _2)
+                           );
+  }
 }
 
 
-void TopicThrottleControlDisplay::finishedSetting(int succeeded)
-{
-  if (!succeeded)
-    setStatus(rviz::StatusProperty::Error, "Rate could not be set!", "Error");
-    
-}
+
 
 // Helper function to test whether the parent has an update rate parameter
 // FIXME: Ideally this would test if the update_rate parameter is actually
@@ -178,9 +207,9 @@ void TopicThrottleControlDisplay::fillTopicList()
   {
    const ros::master::TopicInfo& topic = *it;
    // Only add topics with a reconfigurable rate;
-   if( isParentReconfigurable(topic))
+   if( isGrandparentThrottleable(topic))
    {
-     std::string parent_topic_name = getParentName(topic.name);
+     std::string parent_topic_name = getGrandparentName(topic.name);
      topic_name_->addOptionStd(parent_topic_name);
    }
  }
@@ -193,34 +222,108 @@ void TopicThrottleControlDisplay::fillTopicList()
 bool TopicThrottleControlDisplay::getRate()
 {
   double rate;
-  bool ok = ros::param::get(topic_name_->getStdString()+"/update_rate", rate);
+  bool ok = ros::param::get(topic_name_->getStdString()
+                            + "/data_throttle/update_rate",
+                            rate);
+  
   if (!ok)
     return false;
   topic_rate_->setValue(rate);
   return true;
 }
 
+
+
+
 void TopicThrottleControlDisplay::updateTopicFrequency()
 {
   setTopicRate(topic_name_->getStdString(), topic_rate_->getFloat());           
 }
 
-// When the topic name is updated, go ahead and find out the current publication rate
+
+
+
+/// When the topic name is updated, go ahead and find out the
+/// current publication rate
 void TopicThrottleControlDisplay::updateTopicName()
 {
+  // delete existing action clients
+  delete set_rate_ac_;
+  delete send_msg_ac_;
+
+  // create action clients
+  set_rate_ac_ = new actionlib::SimpleActionClient<advanced_nodelet_throttle::
+                                SetRateAction>(topic_name_->getStdString() 
+                                               + "/set_rate", 
+                                               true);
+
+
+  send_msg_ac_ = new actionlib::SimpleActionClient<advanced_nodelet_throttle::
+                                SendOneMsgAction>(topic_name_->getStdString() 
+                                                  + "/request_single_msg", 
+                                                  true);
+ 
+  // update rate
   if (!getRate())
-    setStatus(rviz::StatusProperty::Error, "Topic does not have reconfigurable parameter required", "Error");
+    setStatus(rviz::StatusProperty::Error, 
+              "Topic does not have reconfigurable parameter required",
+              "Error");
+ 
+  return;
 }
 
 
-void DynRecThread::run()
+
+
+  
+void TopicThrottleControlDisplay::setTopicRateDoneCallback(
+        const actionlib::SimpleClientGoalState &state, 
+        const advanced_nodelet_throttle::SetRateResultConstPtr &result)
 {
-  std::string command_str = "rosrun dynamic_reconfigure dynparam set "
-    + topic_name_
-    + " update_rate " + QString::number(rate_).toStdString();
-  Q_EMIT finishedRunning(system(command_str.c_str()) == 0);  
+
+  if(state != actionlib::SimpleClientGoalState::SUCCEEDED)
+    setStatus(rviz::StatusProperty::Error, "Set Topic Rate Failed", "Error");
+  else
+    setStatus(rviz::StatusProperty::Ok, "Set Topic Rate Succeede", "Ok");
+
+}
+
+
+
+
+
+ void TopicThrottleControlDisplay::sendMsgDoneCallback(
+         const actionlib::SimpleClientGoalState &state, 
+         const advanced_nodelet_throttle::SendOneMsgResultConstPtr &result)
+{
+  if(state != actionlib::SimpleClientGoalState::SUCCEEDED)
+    setStatus(rviz::StatusProperty::Error, 
+              "Single Message Request Failed", 
+              "Error");
 }
 
 
 
+void TopicThrottleControlDisplay::getOneMessage()
+{
+  if (!send_msg_ac_)
+    return;
+  if(!send_msg_ac_->waitForServer(ros::Duration(5.0)))
+    {
+      setStatus(rviz::StatusProperty::Error, 
+                "Couldn't reach action server", 
+                "Error");
+    }
+  else
+  {
+    advanced_nodelet_throttle::SendOneMsgGoal g;
+
+    send_msg_ac_->sendGoal(g, boost::bind(&TopicThrottleControlDisplay
+                                          ::sendMsgDoneCallback,
+                                          this,
+                                          _1, _2));    
+  }
 }
+
+
+}//namespace
